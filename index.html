@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Portaria</title>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+  <style>
+    :root { --azul:#0000ff; --vermelho:#ff0000; --branco:#fff; --verde:#1f8a35; --laranja:#b36b00; --erro:#b3202f; }
+    * { box-sizing:border-box; }
+    html, body { margin:0; background:var(--azul); }
+    body { padding:16px 14px 40px; font-family:'Poppins',Arial,sans-serif; color:var(--branco); }
+    .wrap { max-width:480px; margin:0 auto; }
+    h1 { margin:0 0 4px; color:var(--vermelho); font-weight:800; font-size:34px; letter-spacing:-1px; text-align:center; }
+    .cont { text-align:center; font-size:14px; margin-bottom:12px; opacity:.95; }
+    label { display:block; font-size:12px; font-weight:500; text-transform:uppercase; margin:10px 0 4px; }
+    input[type=password], input[type=text] { width:100%; padding:12px; border:0; border-radius:3px; font-size:16px; font-family:inherit; color:var(--azul); background:var(--branco); }
+    button { display:block; width:100%; margin-top:10px; padding:13px; border:0; border-radius:3px; background:var(--branco); color:var(--azul); font-family:inherit; font-weight:700; font-size:16px; text-transform:uppercase; cursor:pointer; }
+    button.sec { background:transparent; color:var(--branco); border:1px solid rgba(255,255,255,.6); font-weight:500; }
+    button:disabled { opacity:.5; }
+    .cam { position:relative; margin-top:12px; border-radius:6px; overflow:hidden; background:#000; display:none; }
+    .cam video { width:100%; display:block; }
+    .cam .mira { position:absolute; inset:18% 18%; border:3px solid rgba(255,255,255,.9); border-radius:12px; pointer-events:none; }
+    #res { display:none; margin-top:14px; border-radius:8px; padding:20px 14px; text-align:center; font-size:18px; }
+    #res .big { font-size:30px; font-weight:800; line-height:1.1; margin-bottom:6px; }
+    #res .peq { font-size:14px; opacity:.95; margin-top:4px; }
+    .valido, .ok { background:var(--verde); } .usado { background:var(--laranja); } .invalido { background:var(--erro); }
+    .check { display:flex; align-items:center; gap:8px; margin-top:12px; font-size:14px; }
+    .check input { width:20px; height:20px; }
+    .msg { margin-top:10px; font-size:14px; color:#ffe600; font-weight:500; }
+    canvas { display:none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>PORTARIA</h1>
+    <div class="cont" id="cont">&nbsp;</div>
+
+    <label for="senha">Senha da portaria</label>
+    <input id="senha" type="password" autocomplete="off">
+
+    <button id="btnCam" onclick="ligar()">Ligar câmera</button>
+    <div class="cam" id="camBox"><video id="vid" playsinline muted></video><div class="mira"></div></div>
+    <canvas id="cv"></canvas>
+    <div class="msg" id="erro"></div>
+
+    <label class="check"><input type="checkbox" id="auto"> Liberar entrada automaticamente quando for válido</label>
+
+    <div id="res"></div>
+    <button id="btnConf" style="display:none" onclick="confirmar()">Confirmar entrada</button>
+    <button id="btnProx" class="sec" style="display:none" onclick="proximo()">Próximo ingresso</button>
+
+    <label for="cod">Ou digite o código</label>
+    <input id="cod" type="text" autocapitalize="characters" maxlength="12">
+    <button class="sec" onclick="manual()">Consultar código</button>
+  </div>
+
+  <script>
+    // >>> COLE AQUI a URL do seu app (a que termina em /exec) <<<
+    const API_URL = 'https://script.google.com/macros/s/AKfycby46_3Gen98tXdrEcm466rMrh1OBPlDi05H4nenYOJGfYltF1VQu6jN6Avse7tE_3938g/exec';
+
+    const $ = id => document.getElementById(id);
+    function esc(t) { return String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+    try { $('senha').value = localStorage.getItem('senha_portaria') || ''; $('auto').checked = localStorage.getItem('auto_portaria') === '1'; } catch (e) {}
+    $('auto').addEventListener('change', () => { try { localStorage.setItem('auto_portaria', $('auto').checked ? '1' : '0'); } catch (e) {} });
+
+    async function api(acao, codigo) {
+      try { localStorage.setItem('senha_portaria', $('senha').value); } catch (e) {}
+      const r = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ acao: acao, codigo: codigo || '', senha: $('senha').value })
+      });
+      return r.json();
+    }
+
+    /* ---------- câmera ---------- */
+    let stream = null, rodando = false, pausado = false, ultimo = '', ultimoT = 0, atual = '';
+
+    async function ligar() {
+      $('erro').textContent = '';
+      if (typeof jsQR === 'undefined') { $('erro').textContent = 'Não foi possível carregar o leitor de QR. Verifique a internet.'; return; }
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        $('vid').srcObject = stream;
+        await $('vid').play();
+        $('camBox').style.display = 'block';
+        $('btnCam').textContent = 'Desligar câmera';
+        $('btnCam').onclick = desligar;
+        rodando = true; pausado = false;
+        atualizarContagem();
+        requestAnimationFrame(tick);
+      } catch (e) {
+        $('erro').textContent = 'Não consegui abrir a câmera. Permita o acesso à câmera nas configurações do navegador e tente de novo.';
+      }
+    }
+
+    function desligar() {
+      rodando = false;
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      $('camBox').style.display = 'none';
+      $('btnCam').textContent = 'Ligar câmera';
+      $('btnCam').onclick = ligar;
+    }
+
+    function tick() {
+      if (!rodando) return;
+      const v = $('vid');
+      if (!pausado && v.readyState === v.HAVE_ENOUGH_DATA && v.videoWidth) {
+        const esc_ = Math.min(1, 640 / v.videoWidth);
+        const w = Math.round(v.videoWidth * esc_), h = Math.round(v.videoHeight * esc_);
+        const cv = $('cv'); cv.width = w; cv.height = h;
+        const ctx = cv.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(v, 0, 0, w, h);
+        const q = jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
+        if (q && q.data) lido(q.data);
+      }
+      requestAnimationFrame(tick);
+    }
+
+    function extrair(txt) {
+      const m = String(txt).match(/[?&](?:page|c)=([A-Za-z0-9]{12})(?:&|$)/);
+      if (m) return m[1].toUpperCase();
+      return /^[A-Za-z0-9]{12}$/.test(txt) ? txt.toUpperCase() : null;
+    }
+
+    function lido(txt) {
+      const cod = extrair(txt);
+      if (!cod) return;
+      if (cod === ultimo && Date.now() - ultimoT < 4000) return;
+      ultimo = cod; ultimoT = Date.now();
+      consultar(cod);
+    }
+
+    /* ---------- validação ---------- */
+    function mostrar(r) {
+      const res = $('res'); res.style.display = 'block';
+      $('btnConf').style.display = 'none';
+      $('btnProx').style.display = 'block';
+      if (r.erro) { res.className = 'invalido'; res.innerHTML = '<div class="big">ERRO</div><div class="peq">' + esc(r.erro) + '</div>'; return; }
+      const pessoa = r.nome ? '<div class="peq"><b>' + esc(r.nome) + '</b></div><div class="peq">' + esc(r.tipo) + ' · entrada ' + esc(r.seq) + '</div>' +
+        ((r.comprador && r.comprador !== r.nome) ? '<div class="peq">comprador: ' + esc(r.comprador) + '</div>' : '') : '';
+      if (r.status === 'VALIDO') {
+        res.className = 'valido'; res.innerHTML = '<div class="big">VÁLIDO</div>' + pessoa;
+        if ($('auto').checked) { confirmar(); } else { $('btnConf').style.display = 'block'; }
+      } else if (r.status === 'OK') {
+        res.className = 'ok'; res.innerHTML = '<div class="big">ENTRADA LIBERADA</div>' + pessoa;
+        atualizarContagem(); depois();
+      } else if (r.status === 'USADO') {
+        res.className = 'usado'; res.innerHTML = '<div class="big">JÁ UTILIZADO</div>' + pessoa + '<div class="peq">em ' + esc(r.usadoEm) + '</div>'; depois();
+      } else {
+        res.className = 'invalido'; res.innerHTML = '<div class="big">INVÁLIDO</div><div class="peq">Código não encontrado</div>'; depois();
+      }
+      try { navigator.vibrate && navigator.vibrate(r.status === 'OK' || r.status === 'VALIDO' ? 80 : [120, 60, 120]); } catch (e) {}
+    }
+
+    // volta a escanear sozinho depois de alguns segundos
+    let timer = null;
+    function depois() { clearTimeout(timer); timer = setTimeout(proximo, 3500); }
+
+    async function consultar(cod) {
+      atual = cod; pausado = true; clearTimeout(timer);
+      $('cod').value = cod;
+      const res = $('res'); res.style.display = 'block'; res.className = ''; res.style.background = '#222'; res.innerHTML = 'Consultando...';
+      try { mostrar(await api('consultar', cod)); res.style.background = ''; }
+      catch (e) { res.style.background = ''; mostrar({ erro: 'Falha de conexão. Tente de novo.' }); }
+    }
+
+    async function confirmar() {
+      $('btnConf').disabled = true;
+      try { mostrar(await api('confirmar', atual)); }
+      catch (e) { mostrar({ erro: 'Falha de conexão. Tente de novo.' }); }
+      $('btnConf').disabled = false;
+    }
+
+    function proximo() {
+      clearTimeout(timer);
+      $('res').style.display = 'none'; $('btnConf').style.display = 'none'; $('btnProx').style.display = 'none';
+      $('cod').value = ''; atual = ''; pausado = false;
+    }
+
+    function manual() {
+      const c = extrair($('cod').value.trim()) || $('cod').value.trim().toUpperCase();
+      if (c) consultar(c);
+    }
+
+    async function atualizarContagem() {
+      try {
+        const r = await api('presenca');
+        if (r.lista) {
+          const ent = r.lista.filter(i => i.entrou).length;
+          $('cont').textContent = 'Entraram ' + ent + ' de ' + r.lista.length + ' ingressos';
+        } else if (r.erro) { $('cont').textContent = r.erro; }
+      } catch (e) {}
+    }
+  </script>
+</body>
+</html>
