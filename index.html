@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Portaria</title>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700;800&display=swap" rel="stylesheet">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
   <style>
     :root { --azul:#0000ff; --vermelho:#ff0000; --branco:#fff; --verde:#1f8a35; --laranja:#b36b00; --erro:#b3202f; }
     * { box-sizing:border-box; }
@@ -76,12 +75,31 @@
       return r.json();
     }
 
+    /* ---------- leitor de QR (carrega de até 3 fontes) ---------- */
+    const FONTES_JSQR = [
+      'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js',
+      'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js',
+      'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js'
+    ];
+    function carregarJsQR() {
+      if (typeof jsQR !== 'undefined') return Promise.resolve();
+      return FONTES_JSQR.reduce((p, url) => p.catch(() => new Promise((ok, fail) => {
+        const s = document.createElement('script');
+        s.src = url;
+        s.onload = () => (typeof jsQR !== 'undefined' ? ok() : fail());
+        s.onerror = fail;
+        document.head.appendChild(s);
+      })), Promise.reject());
+    }
+    carregarJsQR().catch(() => {});
+
     /* ---------- câmera ---------- */
     let stream = null, rodando = false, pausado = false, ultimo = '', ultimoT = 0, atual = '';
 
     async function ligar() {
       $('erro').textContent = '';
-      if (typeof jsQR === 'undefined') { $('erro').textContent = 'Não foi possível carregar o leitor de QR. Verifique a internet.'; return; }
+      try { await carregarJsQR(); }
+      catch (e) { $('erro').textContent = 'Não foi possível carregar o leitor de QR. Verifique a internet ou desative bloqueadores de anúncio para este site.'; return; }
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
         $('vid').srcObject = stream;
